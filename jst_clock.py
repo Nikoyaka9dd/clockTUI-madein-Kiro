@@ -28,9 +28,9 @@ class JSTClock:
         self.MOVE_CURSOR = "\033[H"
 
         # アナログ時計の設定（小さく円形に）
-        self.clock_radius = 6
-        self.clock_width = self.clock_radius * 2 + 1
-        self.clock_height = self.clock_radius + 1
+        self.clock_radius = 5
+        self.clock_width = self.clock_radius * 2 + 3
+        self.clock_height = self.clock_radius * 2 + 3
         self.center_x = self.clock_width // 2
         self.center_y = self.clock_height // 2
 
