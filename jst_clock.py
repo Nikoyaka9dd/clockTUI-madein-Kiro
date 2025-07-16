@@ -9,6 +9,8 @@ import datetime
 import os
 import sys
 import math
+import psutil
+from collections import deque
 from typing import List, Tuple
 
 
@@ -25,16 +27,28 @@ class JSTClock:
         self.CLEAR_SCREEN = "\033[2J"
         self.MOVE_CURSOR = "\033[H"
 
-        # アナログ時計の設定
-        self.clock_radius = 10
-        self.width = self.clock_radius * 4  # 横幅を広くして円形に近づける
-        self.height = self.clock_radius * 2 + 1
-        self.center_x = self.width // 2
-        self.center_y = self.height // 2
+        # アナログ時計の設定（小さく円形に）
+        self.clock_radius = 6
+        self.clock_width = self.clock_radius * 2 + 1
+        self.clock_height = self.clock_radius + 1
+        self.center_x = self.clock_width // 2
+        self.center_y = self.clock_height // 2
+
+        # システム監視の設定
+        self.graph_width = 40
+        self.graph_height = 12
+        self.cpu_history = deque(maxlen=self.graph_width)
+        self.memory_history = deque(maxlen=self.graph_width)
+
+        # 初期データを0で埋める
+        for _ in range(self.graph_width):
+            self.cpu_history.append(0)
+            self.memory_history.append(0)
 
     def clear_screen(self):
         """画面をクリア"""
-        print(self.CLEAR_SCREEN + self.MOVE_CURSOR, end="")
+        # より確実な画面クリア
+        os.system("clear" if os.name == "posix" else "cls")
 
     def get_jst_time(self) -> datetime.datetime:
         """日本標準時を取得"""
@@ -66,7 +80,7 @@ class JSTClock:
         error = dx - dy
 
         while True:
-            if 0 <= y < self.height and 0 <= x < self.width:
+            if 0 <= y < self.clock_height and 0 <= x < self.clock_width:
                 clock[y][x] = char
 
             if x == x2 and y == y2:
@@ -80,77 +94,147 @@ class JSTClock:
                 error += dx
                 y += y_inc
 
+    def get_system_stats(self):
+        """システム使用率を取得"""
+        cpu_percent = psutil.cpu_percent(interval=None)
+        memory_percent = psutil.virtual_memory().percent
+
+        self.cpu_history.append(cpu_percent)
+        self.memory_history.append(memory_percent)
+
+        return cpu_percent, memory_percent
+
+    def create_graph(self, data: deque, title: str, color: str) -> List[str]:
+        """折れ線グラフを作成"""
+        graph = [
+            [" " for _ in range(self.graph_width + 10)]
+            for _ in range(self.graph_height + 3)
+        ]
+
+        # タイトル
+        title_line = f"{color}{title}{self.RESET}"
+        for i, char in enumerate(title):
+            if i < len(title):
+                graph[0][i] = char
+
+        # Y軸の目盛り（0-100%）
+        for i in range(self.graph_height):
+            y_value = 100 - (i * 100 // (self.graph_height - 1))
+            y_label = f"{y_value:3d}%"
+            for j, char in enumerate(y_label):
+                if j < 4:
+                    graph[i + 2][j] = char
+
+        # グラフの枠
+        for i in range(self.graph_height):
+            graph[i + 2][5] = "│"
+
+        for j in range(self.graph_width):
+            graph[self.graph_height + 1][j + 6] = "─"
+
+        # データをプロット
+        if len(data) > 1:
+            for i in range(1, len(data)):
+                if data[i - 1] is not None and data[i] is not None:
+                    # Y座標を計算（上下反転）
+                    y1 = (
+                        self.graph_height
+                        - int((data[i - 1] / 100) * (self.graph_height - 1))
+                        + 1
+                    )
+                    y2 = (
+                        self.graph_height
+                        - int((data[i] / 100) * (self.graph_height - 1))
+                        + 1
+                    )
+
+                    x1 = i - 1 + 6
+                    x2 = i + 6
+
+                    # 線を描画
+                    if (
+                        0 <= y1 < self.graph_height + 2
+                        and 0 <= y2 < self.graph_height + 2
+                    ):
+                        if abs(y2 - y1) <= 1:
+                            # 水平に近い場合
+                            if x2 < self.graph_width + 6:
+                                graph[y2][x2] = "●"
+                        else:
+                            # 垂直線を描画
+                            start_y = min(y1, y2)
+                            end_y = max(y1, y2)
+                            for y in range(start_y, end_y + 1):
+                                if (
+                                    y < self.graph_height + 2
+                                    and x2 < self.graph_width + 6
+                                ):
+                                    graph[y][x2] = "│"
+
+        # 文字列に変換
+        return ["".join(row).rstrip() for row in graph]
+
     def create_clock_face(self, hour: int, minute: int, second: int) -> List[str]:
         """アナログ時計の文字盤を作成"""
-        clock = [[" " for _ in range(self.width)] for _ in range(self.height)]
+        clock = [
+            [" " for _ in range(self.clock_width)] for _ in range(self.clock_height)
+        ]
 
-        # 時計の外枠を描画（楕円補正）
-        for i in range(self.height):
-            for j in range(self.width):
-                # 楕円の方程式を使用して円形に近づける
-                dx = (j - self.center_x) / 2.0  # 横方向を半分に圧縮
+        # 時計の外枠を描画（真円に近づける）
+        for i in range(self.clock_height):
+            for j in range(self.clock_width):
+                dx = j - self.center_x
                 dy = i - self.center_y
                 distance = math.sqrt(dx * dx + dy * dy)
 
-                if abs(distance - self.clock_radius) < 0.8:
-                    clock[i][j] = "█"
+                if abs(distance - (self.clock_radius - 1)) < 0.6:
+                    clock[i][j] = "●"
 
-        # 12時間の目盛りを描画
-        for h in range(12):
-            angle = h * 30  # 30度ずつ
-            # 楕円補正を適用した位置計算
-            adjusted_angle = angle - 90
-            radian = math.radians(adjusted_angle)
+        # 主要な時刻のみ表示（12, 3, 6, 9時）
+        main_hours = [0, 3, 6, 9]
+        for h in main_hours:
+            angle = h * 30
+            radian = math.radians(angle - 90)
 
-            mark_x = self.center_x + int((self.clock_radius - 1) * math.cos(radian) * 2)
-            mark_y = self.center_y + int((self.clock_radius - 1) * math.sin(radian))
+            mark_x = self.center_x + int((self.clock_radius - 2) * math.cos(radian))
+            mark_y = self.center_y + int((self.clock_radius - 2) * math.sin(radian))
 
-            if 0 <= mark_y < self.height and 0 <= mark_x < self.width:
-                if h == 0:  # 12時
-                    if mark_x + 1 < self.width:
-                        clock[mark_y][mark_x] = "1"
-                        clock[mark_y][mark_x + 1] = "2"
-                    else:
-                        clock[mark_y][mark_x] = "12"[0]
-                elif h == 3:  # 3時
-                    clock[mark_y][mark_x] = "3"
-                elif h == 6:  # 6時
-                    clock[mark_y][mark_x] = "6"
-                elif h == 9:  # 9時
-                    clock[mark_y][mark_x] = "9"
+            if 0 <= mark_y < self.clock_height and 0 <= mark_x < self.clock_width:
+                if h == 0:
+                    clock[mark_y][mark_x] = "12"[0]
+                    if mark_x + 1 < self.clock_width:
+                        clock[mark_y][mark_x + 1] = "12"[1]
                 else:
-                    clock[mark_y][mark_x] = "•"
+                    clock[mark_y][mark_x] = str(h if h != 0 else 12)
 
         # 針の角度を計算
-        hour_angle = (hour % 12) * 30 + minute * 0.5  # 時針
-        minute_angle = minute * 6  # 分針
-        second_angle = second * 6  # 秒針
+        hour_angle = (hour % 12) * 30 + minute * 0.5
+        minute_angle = minute * 6
+        second_angle = second * 6
 
         # 時針を描画（短い）
         hour_radian = math.radians(hour_angle - 90)
-        hour_x = self.center_x + int(
-            self.clock_radius * 0.5 * math.cos(hour_radian) * 2
-        )
-        hour_y = self.center_y + int(self.clock_radius * 0.5 * math.sin(hour_radian))
-        self.draw_line(clock, self.center_x, self.center_y, hour_x, hour_y, "│")
+        hour_x = self.center_x + int(self.clock_radius * 0.4 * math.cos(hour_radian))
+        hour_y = self.center_y + int(self.clock_radius * 0.4 * math.sin(hour_radian))
+        self.draw_line(clock, self.center_x, self.center_y, hour_x, hour_y, "━")
 
         # 分針を描画（長い）
         minute_radian = math.radians(minute_angle - 90)
         minute_x = self.center_x + int(
-            self.clock_radius * 0.8 * math.cos(minute_radian) * 2
+            self.clock_radius * 0.7 * math.cos(minute_radian)
         )
         minute_y = self.center_y + int(
-            self.clock_radius * 0.8 * math.sin(minute_radian)
+            self.clock_radius * 0.7 * math.sin(minute_radian)
         )
-        self.draw_line(clock, self.center_x, self.center_y, minute_x, minute_y, "│")
+        self.draw_line(clock, self.center_x, self.center_y, minute_x, minute_y, "─")
 
         # 秒針を描画（最も長い、細い）
         second_radian = math.radians(second_angle - 90)
         second_x = self.center_x + int(
-            self.clock_radius * 0.9 * math.cos(second_radian) * 2
+            self.clock_radius * 0.8 * math.cos(second_radian)
         )
         second_y = self.center_y + int(
-            self.clock_radius * 0.9 * math.sin(second_radian)
+            self.clock_radius * 0.8 * math.sin(second_radian)
         )
         self.draw_line(clock, self.center_x, self.center_y, second_x, second_y, "│")
 
@@ -160,28 +244,83 @@ class JSTClock:
         # 文字列に変換
         return ["".join(row) for row in clock]
 
-    def display_analog_clock(self, jst_time: datetime.datetime):
-        """アナログ時計を表示"""
+    def display_split_screen(self, jst_time: datetime.datetime):
+        """画面を分割して時計とグラフを表示"""
+        # システム使用率を取得
+        cpu_percent, memory_percent = self.get_system_stats()
+
+        # 時計を作成
         hour = jst_time.hour
         minute = jst_time.minute
         second = jst_time.second
-
         clock_lines = self.create_clock_face(hour, minute, second)
 
-        # ターミナル幅を取得して中央寄せ
-        terminal_width = os.get_terminal_size().columns
-
-        print(f"{self.BOLD}{self.BRIGHT_PURPLE}")
-        for line in clock_lines:
-            line_length = len(line)
-            padding = (terminal_width - line_length) // 2
-            print(f"{' ' * padding}{line}")
-        print(self.RESET)
-
-        # デジタル時刻も小さく表示
+        # 時計の下にデジタル時刻を追加
         time_str = jst_time.strftime("%H:%M:%S")
-        padding = (terminal_width - len(time_str)) // 2
-        print(f"{self.PURPLE}{' ' * padding}{time_str}{self.RESET}")
+        clock_lines.append("")
+        clock_lines.append(f"{self.PURPLE}{time_str}{self.RESET}")
+
+        # 時計セクションにタイトルを追加
+        clock_section = [
+            f"{self.BRIGHT_PURPLE}【アナログ時計】{self.RESET}"
+        ] + clock_lines
+
+        # グラフを作成
+        cpu_graph = self.create_graph(
+            self.cpu_history, f"CPU: {cpu_percent:.1f}%", self.BRIGHT_PURPLE
+        )
+        memory_graph = self.create_graph(
+            self.memory_history, f"Memory: {memory_percent:.1f}%", self.PURPLE
+        )
+
+        # CPUグラフにタイトルを追加
+        cpu_section = [f"{self.BRIGHT_PURPLE}【CPU使用率】{self.RESET}"] + cpu_graph
+
+        # メモリグラフにタイトルを追加
+        memory_section = [f"{self.PURPLE}【メモリ使用率】{self.RESET}"] + memory_graph
+
+        # 各セクションの幅を設定
+        clock_width = 20
+        graph_width = 55
+
+        # 最大行数を計算
+        max_lines = max(len(clock_section), len(cpu_section), len(memory_section))
+
+        print(f"{self.BOLD}")
+        for i in range(max_lines):
+            line_parts = []
+
+            # 左側：時計
+            if i < len(clock_section):
+                clock_content = clock_section[i]
+            else:
+                clock_content = ""
+            line_parts.append(clock_content.ljust(clock_width))
+
+            # 区切り文字
+            line_parts.append(" │ ")
+
+            # 中央：CPUグラフ
+            if i < len(cpu_section):
+                cpu_content = cpu_section[i]
+            else:
+                cpu_content = ""
+            line_parts.append(cpu_content.ljust(graph_width))
+
+            # 区切り文字
+            line_parts.append(" │ ")
+
+            # 右側：メモリグラフ
+            if i < len(memory_section):
+                memory_content = memory_section[i]
+            else:
+                memory_content = ""
+            line_parts.append(memory_content)
+
+            # 行を結合して表示
+            print("".join(line_parts))
+
+        print(self.RESET)
 
     def display_date_info(self, jst_time: datetime.datetime):
         """日付情報を表示"""
@@ -232,7 +371,7 @@ class JSTClock:
 
                 # 表示
                 self.display_date_info(jst_time)
-                self.display_analog_clock(jst_time)
+                self.display_split_screen(jst_time)
                 self.display_footer()
 
                 # 1秒待機
