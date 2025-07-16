@@ -255,10 +255,12 @@ class JSTClock:
         second = jst_time.second
         clock_lines = self.create_clock_face(hour, minute, second)
 
-        # 時計の下にデジタル時刻を追加
+        # 時計の下にデジタル時刻とタイムゾーンを追加
         time_str = jst_time.strftime("%H:%M:%S")
+        timezone_str = "JST (UTC+9)"
         clock_lines.append("")
         clock_lines.append(f"{self.PURPLE}{time_str}{self.RESET}")
+        clock_lines.append(f"{self.BRIGHT_PURPLE}{timezone_str}{self.RESET}")
 
         # 時計セクションを固定の高さにする
         clock_section = [
