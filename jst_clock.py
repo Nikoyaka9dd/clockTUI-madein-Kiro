@@ -260,10 +260,15 @@ class JSTClock:
         clock_lines.append("")
         clock_lines.append(f"{self.PURPLE}{time_str}{self.RESET}")
 
-        # 時計セクションにタイトルを追加
+        # 時計セクションを固定の高さにする
         clock_section = [
             f"{self.BRIGHT_PURPLE}【アナログ時計】{self.RESET}"
         ] + clock_lines
+
+        # 時計セクションを固定の高さ（15行）にパディング
+        clock_fixed_height = 15
+        while len(clock_section) < clock_fixed_height:
+            clock_section.append("")
 
         # グラフを作成
         cpu_graph = self.create_graph(
@@ -283,14 +288,14 @@ class JSTClock:
         clock_width = 20
         graph_width = 55
 
-        # 最大行数を計算
-        max_lines = max(len(clock_section), len(cpu_section), len(memory_section))
+        # 最大行数を計算（時計セクションは固定高さを使用）
+        max_lines = max(clock_fixed_height, len(cpu_section), len(memory_section))
 
         print(f"{self.BOLD}")
         for i in range(max_lines):
             line_parts = []
 
-            # 左側：時計
+            # 左側：時計（固定高さ）
             if i < len(clock_section):
                 clock_content = clock_section[i]
             else:
